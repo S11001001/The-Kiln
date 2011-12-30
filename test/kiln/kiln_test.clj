@@ -104,6 +104,35 @@
             (catch [:type :kiln-cleanup-exception] {:keys [exceptions]}
               (map (fn [e] (-> e .getData :object :value)) exceptions)))))))
 
+(def ^:dynamic ^:private tci-tick)
+(defclay left-prim-resource
+  :value (do (swap! tci-tick inc) (+ (?? coal-1) 42)))
+(defclay right-prim-resource
+  :value (do (swap! tci-tick inc) (+ (?? coal-2) 84)))
+(defclay left-derived-resource
+  :value (+ (?? left-prim-resource)
+            (do (Thread/sleep 20) (swap! tci-tick inc)
+                (?? right-prim-resource))))
+(defclay right-derived-resource
+  :value (+ (?? right-prim-resource)
+            (do (Thread/sleep 20) (swap! tci-tick inc)
+                (?? left-prim-resource))))
+
+(deftest test-concurrent-idempotence
+  (dotimes [_ 5]
+    (binding [tci-tick (atom 0)]
+      (let [k (new-kiln)
+            prim-1 (rand-int 500)
+            prim-2 (rand-int 500)]
+        (stoke-coal k coal-1 prim-1)
+        (stoke-coal k coal-2 prim-2)
+        (->> [left-derived-resource, right-derived-resource]
+             (map #(future (fire k %))), doall, (map deref))
+        (is (integer? (fire k left-derived-resource)))
+        (is (= (fire k left-derived-resource)
+               (fire k right-derived-resource)))
+        (is (= 4 @tci-tick))))))
+
 (defcoal qqq)
 (defclay yyy)
 
